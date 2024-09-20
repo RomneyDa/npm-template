@@ -1,6 +1,8 @@
 import { DependencyInstallation, InstallationPlan, Dependency } from "../../types";
 import semver from 'semver';
 import path from 'path';
+import fs from 'fs';
+import { outputDir } from '../../util/paths';
 
 /**
  *
@@ -16,14 +18,32 @@ export async function constructInstallationPlan(
     versionRange: string;
     parentDirectory: string | undefined;
   }>();
+
+  // Cache file path
+  const cacheFilePath = path.join(outputDir, 'packageInfoCache.json');
+
+  // Initialize packageInfoCache from file
   const packageInfoCache = new Map<string, any>();
+  if (fs.existsSync(cacheFilePath)) {
+    try {
+      const cacheData = fs.readFileSync(cacheFilePath, 'utf8');
+      const cacheJson = JSON.parse(cacheData);
+      for (const [key, value] of Object.entries(cacheJson)) {
+        packageInfoCache.set(key, value);
+      }
+    } catch (error) {
+      console.error('Error reading cache file:', error);
+    }
+  }
 
   // Function to fetch package metadata with caching
   async function getCachedPackageInfo(packageName: string): Promise<any> {
     if (packageInfoCache.has(packageName)) {
       return packageInfoCache.get(packageName);
     } else {
-      console.log(`Getting package info for ${packageName}`)
+      // Introduce a delay to avoid rate limiting
+      // await new Promise(res => setTimeout(res, 100));
+      console.log(`Fetching package info for ${packageName}`)
       const resp = await fetch(
         `https://registry.npmjs.org/${packageName}`,
         {
@@ -31,31 +51,23 @@ export async function constructInstallationPlan(
           headers: {
             Accept: "application/json",
           },
-          // signal: AbortSignal.timeout(4000)
         }
       );
-
       if (resp.status !== 200) {
         throw new Error(`Failed to fetch metadata for package ${packageName}`);
       }
-      const allData = await resp.json() as {
-        versions: {
-          [key: string]: {
-            dependencies: Record<string, string>
-          }
-        }
-      }
-      const relevantData = {
-        versions: Object.fromEntries(Object.keys(allData.versions).map(k => {
-          const version = allData.versions[k]
-          const dependencies = version.dependencies
-          return [k, { dependencies }]
-        }))
-      }
-      packageInfoCache.set(packageName, relevantData);
-      console.log(`Package info for ${packageName}:\n${JSON.stringify(relevantData, null, 4)}`)
+      const data = await resp.json();
+      packageInfoCache.set(packageName, data);
 
-      return relevantData;
+      // Write cache to file
+      try {
+        const cacheJson = Object.fromEntries(packageInfoCache);
+        fs.writeFileSync(cacheFilePath, JSON.stringify(cacheJson, null, 2), 'utf8');
+      } catch (error) {
+        console.error('Error writing to cache file:', error);
+      }
+
+      return data;
     }
   }
 
