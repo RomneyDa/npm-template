@@ -2,7 +2,7 @@ import fs from "fs";
 import { installPackages } from "../../util/download";
 import { DEFAULT_PACKAGE_JSON } from "../../util/packageJson";
 import { nodeModulesPath, packageJsonPath } from "../../util/paths";
-import { constructInstallationPlan } from "./TODO";
+import { constructInstallationPlan } from "./construct-plan";
 
 /**
  * This is the function that is called when the `install` CLI command is run

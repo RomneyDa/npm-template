@@ -14,6 +14,7 @@ export async function getPackageInfo(dep: Dependency): Promise<any> {
       headers: {
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(4000)
     }
   );
   const data = await resp.json();
