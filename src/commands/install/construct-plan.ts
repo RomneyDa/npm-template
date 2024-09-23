@@ -2,6 +2,11 @@ import { DependencyInstallation, InstallationPlan, Dependency } from "../../type
 import semver from 'semver';
 import path from 'path';
 
+interface PackageVersionInfo {
+  count: number;
+  parentDirectories: string[];
+}
+
 /**
  *
  * @param topLevelDependencies The list of dependencies as determined by package.json's `dependencies` object
@@ -17,13 +22,14 @@ export async function constructInstallationPlan(
     parentDirectory: string | undefined;
   }>();
   const packageInfoCache = new Map<string, any>();
+  const versionUsageCount = new Map<string, PackageVersionInfo>();
 
   // Function to fetch package metadata with caching
   async function getCachedPackageInfo(packageName: string): Promise<any> {
     if (packageInfoCache.has(packageName)) {
       return packageInfoCache.get(packageName);
     } else {
-      console.log(`Getting package info for ${packageName}`)
+      console.log(`Getting package info for ${packageName}`);
       const resp = await fetch(
         `https://registry.npmjs.org/${packageName}`,
         {
@@ -31,29 +37,27 @@ export async function constructInstallationPlan(
           headers: {
             Accept: "application/json",
           },
-          // signal: AbortSignal.timeout(4000)
         }
       );
 
       if (resp.status !== 200) {
         throw new Error(`Failed to fetch metadata for package ${packageName}`);
       }
+
       const allData = await resp.json() as {
-        versions: {
-          [key: string]: {
-            dependencies: Record<string, string>
-          }
-        }
-      }
+        versions: { [key: string]: { dependencies: Record<string, string> } },
+      };
+
       const relevantData = {
         versions: Object.fromEntries(Object.keys(allData.versions).map(k => {
-          const version = allData.versions[k]
-          const dependencies = version.dependencies
-          return [k, { dependencies }]
-        }))
-      }
+          const version = allData.versions[k];
+          const dependencies = version.dependencies;
+          return [k, { dependencies }];
+        })),
+      };
+
       packageInfoCache.set(packageName, relevantData);
-      console.log(`Package info for ${packageName}:\n${JSON.stringify(relevantData, null, 4)}`)
+      console.log(`Package info for ${packageName}:\n${JSON.stringify(relevantData, null, 4)}`);
 
       return relevantData;
     }
@@ -100,6 +104,15 @@ export async function constructInstallationPlan(
     const versionInfo = packageInfo.versions[resolvedVersion];
     const dependencies = versionInfo.dependencies || {};
 
+    // Track version usage
+    const versionCountKey = `${dep.name}@${resolvedVersion}`;
+    if (!versionUsageCount.has(versionCountKey)) {
+      versionUsageCount.set(versionCountKey, { count: 0, parentDirectories: [] });
+    }
+    const usageInfo = versionUsageCount.get(versionCountKey)!;
+    usageInfo.count++;
+    usageInfo.parentDirectories.push(parentDirectory || 'root');
+
     // Add to installation plan
     installationPlan.push({
       name: dep.name,
@@ -114,9 +127,11 @@ export async function constructInstallationPlan(
         name: childName,
         version: childVersionRange as string,
       };
+
       const childParentDirectory = parentDirectory
         ? path.join(parentDirectory, 'node_modules', dep.name)
         : dep.name;
+
       await processDependency(childDep, childParentDirectory);
     }
   }
@@ -124,6 +139,24 @@ export async function constructInstallationPlan(
   // Process top-level dependencies
   for (const [name, versionRange] of Object.entries(topLevelDependencies)) {
     await processDependency({ name, version: versionRange });
+  }
+
+  // Elevate the most used versions to the root node_modules
+  for (const [pkgVersion, info] of versionUsageCount.entries()) {
+    const [name, version] = pkgVersion.split('@');
+    const rootParentDirectory = 'root';
+    const existingPlanItem = installationPlan.find(
+      item => item.name === name && item.version === version && item.parentDirectory === rootParentDirectory
+    );
+
+    // Add to the plan if not already present at the root
+    if (!existingPlanItem) {
+      installationPlan.push({
+        name,
+        version,
+        parentDirectory: rootParentDirectory,
+      });
+    }
   }
 
   return installationPlan;
